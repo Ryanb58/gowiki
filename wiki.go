@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"html/template"
+	"regexp"
 )
 
 //Wiki structure:
@@ -17,11 +18,18 @@ type Page struct {
 	Title string
 	Body []byte
 }
-l
+
+//Global Variables:
+var templates = template.Must(template.ParseFiles("edit.html", "view.html"))
+var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
+
 //Handle URL's prefixed with /view/
 func viewHandler(w http.ResponseWriter, r *http.Request) {
     //Get the title from the URL
-    title := r.URL.Path[len("/view/"):]
+    title, err := getTitle(w, r)
+    if err != nil {
+        return
+    }
     //Load the page from the file.
     p, err := loadPage(title)
     //Handle error if someone tries to view a non-existent file. Redirect them to the edit page so they can create one.
@@ -34,7 +42,10 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func editHandler(w http.ResponseWriter, r *http.Request) {
-    title := r.URL.Path[len("/edit/"):]
+    title, err := getTitle(w, r)
+    if err != nil {
+        return
+    }
     p, err := loadPage(title)
     //Check if there were any issues with loading the page.
     if err != nil {
@@ -43,11 +54,18 @@ func editHandler(w http.ResponseWriter, r *http.Request) {
     renderTemplate(w, "edit", p)
 }
 
-func savehandler(w http.ResponseWriter, r *http.Request) {
-    title := r.URL.Path[len("/save/"):]
+func saveHandler(w http.ResponseWriter, r *http.Request) {
+    title, err := getTitle(w, r)
+    if err != nil {
+        return
+    }
     body := r.FormValue("body")
     p := &Page{Title: title, Body: []byte(body)}
-    p.save()
+    err := p.save()
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
     http.Redirect(w, r, "/view/"+title, http.StatusFound)
 }
 
@@ -55,9 +73,25 @@ func savehandler(w http.ResponseWriter, r *http.Request) {
  * Template Code:
  */
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-    t, _ := template.ParseFiles(tmpl + ".html")
-    t.Execute(w, p)
+    err := templates.ExecuteTemplate(w, tmpl+".html", p)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+    }
 }
+
+/*
+ * Validation Functions:
+ */
+//Validate the URL of which to open.
+func getTitle(w http.ResponseWriter, r *http.Request) (string, error) {
+    m := validPath.FindStringSubmatch(r.URL.Path)
+    if m == nil {
+        http.NotFound(w, r)
+        return "", errors.New("Invalid Page Title")
+    }
+    return m[2], nil // The title is the second subexpression.
+}
+
 
 /*
  *Data functions:
@@ -83,7 +117,7 @@ func main() {
     
     http.HandleFunc("/view/", viewHandler)
     http.HandleFunc("/edit/", editHandler)
-    //http.HandleFunc("/save/", saveHandler)
+    http.HandleFunc("/save/", saveHandler)
     http.ListenAndServe(":8080", nil)
     
 /*
